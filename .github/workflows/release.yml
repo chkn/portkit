@@ -1,0 +1,61 @@
+# Builds Caddy with the portkit plugin for every target on one Linux runner
+# (purego needs no cgo, so darwin builds cross-compile), and publishes the
+# tarballs, install.sh and SHA256SUMS with artifact attestations.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CADDY_VERSION: v2.11.7 # pinned; upgraded deliberately
+  XCADDY_VERSION: v0.4.7
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+
+      - name: Check that install.sh matches the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          grep -q "^VERSION=\"$version\"" install.sh || { echo "install.sh VERSION isn't $version"; exit 1; }
+          grep -q "^CADDY_VERSION=\"${CADDY_VERSION#v}\"" install.sh || { echo "install.sh CADDY_VERSION isn't $CADDY_VERSION"; exit 1; }
+
+      - name: Build
+        run: |
+          go install github.com/caddyserver/xcaddy/cmd/xcaddy@$XCADDY_VERSION
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
+            os="${target%/*}" arch="${target#*/}"
+            out="build/$os-$arch"
+            mkdir -p "$out"
+            # The Go linker ad-hoc signs darwin/arm64 binaries, which is all
+            # Apple Silicon needs to run them.
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+              xcaddy build "$CADDY_VERSION" --with "github.com/chkn/portkit=." --output "$out/caddy"
+            tar -czf "dist/caddy-portkit_${version}_${os}_${arch}.tar.gz" -C "$out" caddy
+          done
+          cp install.sh dist/
+          (cd dist && sha256sum -- *.tar.gz install.sh > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

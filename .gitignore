@@ -1,0 +1,4 @@
+/caddy
+/build/
+/dist/
+.DS_Store

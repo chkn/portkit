@@ -1,0 +1,57 @@
+{
+  "admin": {
+    "listen": "portkit/admin",
+    "origins": ["127.0.0.1"],
+    "config": { "persist": true }
+  },
+  "apps": {
+    "portkit": {
+      "idle_exit": "2h",
+      "services": {}
+    },
+    "pki": {
+      "certificate_authorities": {
+        "local": { "name": "portkit local CA", "install_trust": false }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [{ "issuers": [{ "module": "internal" }], "on_demand": true }],
+        "on_demand": { "permission": { "module": "portkit" } }
+      }
+    },
+    "http": {
+      "grace_period": "5s",
+      "servers": {
+        "portkit": {
+          "listen": ["portkit/https:443"],
+          "protocols": ["h1", "h2"],
+          "automatic_https": { "disable_redirects": true },
+          "tls_connection_policies": [{}],
+          "routes": [
+            {
+              "match": [{ "host": ["portkit.localhost"] }],
+              "handle": [{ "handler": "portkit_api" }],
+              "terminal": true
+            },
+            {
+              "match": [{ "portkit": {} }],
+              "handle": [
+                { "handler": "portkit_start" },
+                {
+                  "handler": "reverse_proxy",
+                  "dynamic_upstreams": { "source": "portkit" },
+                  "load_balancing": { "try_duration": "60s", "try_interval": "250ms" }
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [{ "handler": "portkit_help" }]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
