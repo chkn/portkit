@@ -46,6 +46,15 @@ LABEL="dev.portkit.caddy"       # launchd label
 DRY_RUN=0
 UNINSTALL=0
 LOCAL_BINARY=""
+ACTIONS=""                      # next steps for the user, printed at the end
+
+# Color only on a terminal, and never with NO_COLOR set (https://no-color.org).
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+  BOLD=$'\033[1m' DIM=$'\033[2m' GREEN=$'\033[32m'
+  YELLOW=$'\033[33m' BLUE=$'\033[34m' RESET=$'\033[0m'
+else
+  BOLD="" DIM="" GREEN="" YELLOW="" BLUE="" RESET=""
+fi
 
 main() {
   parse_flags "$@"
@@ -54,7 +63,7 @@ main() {
     uninstall
     return
   fi
-  say "Installing portkit $VERSION for $OS/$ARCH into $PORTKIT_HOME"
+  say "${BOLD}Installing portkit $VERSION for $OS/$ARCH${RESET} into $PORTKIT_HOME"
   make_tmp
   download_caddy
   install_files
@@ -63,7 +72,8 @@ main() {
   check_it_works
   check_path
   say ""
-  say "portkit is installed. Try:  portkit register foo 3000  and open https://foo.localhost"
+  say "${GREEN}${BOLD}portkit is installed.${RESET} Try:  ${BOLD}portkit register foo 3000${RESET}  and open ${BOLD}https://foo.localhost${RESET}"
+  print_actions
 }
 
 # Read --dry-run, --uninstall and --binary.
@@ -112,11 +122,11 @@ make_tmp() {
 # Download Caddy (built with the portkit plugin) and check it against the published checksum.
 download_caddy() {
   if [ -n "$LOCAL_BINARY" ]; then
-    say "Using the local build $LOCAL_BINARY"
+    step "Using the local build $LOCAL_BINARY"
     run cp "$LOCAL_BINARY" "$TMP/caddy"
     return
   fi
-  say "Downloading $TARBALL"
+  step "Downloading $TARBALL"
   run curl -fsSL -o "$TMP/$TARBALL"   "$RELEASE_URL/$TARBALL"
   run curl -fsSL -o "$TMP/SHA256SUMS" "$RELEASE_URL/SHA256SUMS"
   run check_sha256 "$TMP" "$TARBALL"
@@ -128,6 +138,7 @@ download_caddy() {
 
 # Install the binary, bootstrap.json and the portkit wrapper.
 install_files() {
+  step "Installing files"
   run mkdir -p "$PORTKIT_HOME/bin" "$PORTKIT_HOME/logs" "$BIN_DIR"
   # Rename into place, so a running Caddy keeps its old binary until it restarts.
   run install -m 0755 "$TMP/caddy" "$PORTKIT_HOME/bin/caddy.new"
@@ -218,6 +229,7 @@ setup_socket_activation() {
 
 # macOS: a per-user LaunchAgent whose Sockets launchd binds itself.
 setup_launchd() {
+  step "Registering the launchd agent $LABEL"
   run mkdir -p "$(dirname "$PLIST")"
   write_file "$PLIST" <<XML
 <?xml version="1.0" encoding="UTF-8"?>
@@ -272,13 +284,13 @@ XML
   fi
   run env PORTKIT_HOME="$PORTKIT_HOME" "$PORTKIT_HOME/bin/caddy" portkit upgrade-config
   run launchctl bootstrap "$domain" "$PLIST"
-  say "macOS may show a \"Background Items Added\" notification for caddy."
+  note "macOS may show a \"Background Items Added\" notification for caddy. That's expected."
 }
 
 # Linux: system units, because a user unit can't bind port 443. The service
 # runs Caddy as you with User=.
 setup_systemd() {
-  say "Writing systemd units to $UNIT_DIR (needs sudo)"
+  step "Writing systemd units to $UNIT_DIR (needs sudo)"
   write_file_sudo "$UNIT_DIR/portkit-https.socket" <<UNIT
 [Unit]
 Description=portkit HTTPS listener
@@ -333,17 +345,23 @@ UNIT
 # Trust the portkit CA. `portkit trust` asks the admin API for the CA, which
 # starts Caddy and creates the CA, then adds it to the system trust store.
 trust_ca() {
-  run "$BIN_DIR/portkit" trust
+  step "Trusting the portkit CA"
+  run "$BIN_DIR/portkit" trust --no-firefox-hint
+  if ! command -v certutil >/dev/null; then
+    action "To trust the CA in Firefox, install certutil (${BOLD}brew install nss${RESET}, or ${BOLD}libnss3-tools${RESET})" \
+           "and run ${BOLD}portkit trust${RESET}, or import this file in Firefox's certificate settings:" \
+           "  $CA_CERT"
+  fi
 }
 
 # Check that https://portkit.localhost answers, through port 443 and the CA.
 check_it_works() {
-  say "Checking https://portkit.localhost/services"
+  step "Checking https://portkit.localhost/services"
   run curl -fsS --resolve portkit.localhost:443:127.0.0.1 --cacert "$CA_CERT" \
     -o /dev/null https://portkit.localhost/services
   if [ "$OS" = linux ] && [ "$DRY_RUN" = 0 ] && ! getent hosts portkit.localhost >/dev/null; then
-    say "Note: this system doesn't resolve *.localhost for command-line tools. Browsers do."
-    say "      Enable nss-myhostname or systemd-resolved to fix it for curl and others."
+    action "This system doesn't resolve *.localhost for command-line tools (browsers do)." \
+           "Enable nss-myhostname or systemd-resolved to fix it for curl and others."
   fi
 }
 
@@ -352,9 +370,8 @@ check_path() {
   case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *)
-      say ""
-      say "$BIN_DIR isn't on your PATH. Add this line to your shell profile:"
-      say "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+      action "$BIN_DIR isn't on your PATH. Add this line to your shell profile:" \
+             "  ${BOLD}export PATH=\"\$HOME/.local/bin:\$PATH\"${RESET}"
       ;;
   esac
 }
@@ -362,7 +379,7 @@ check_path() {
 # Reverse every step: stop Caddy, remove the service definition, untrust the
 # CA, and delete PORTKIT_HOME (with every registered service) and the wrapper.
 uninstall() {
-  say "Uninstalling portkit from $PORTKIT_HOME"
+  say "${BOLD}Uninstalling portkit${RESET} from $PORTKIT_HOME"
   if [ "$OS" = darwin ]; then
     local domain="gui/$(id -u)"
     if launchctl print "$domain/$LABEL" >/dev/null 2>&1; then
@@ -381,7 +398,8 @@ uninstall() {
   fi
   run rm -f "$BIN_DIR/portkit"
   run rm -rf "$PORTKIT_HOME"
-  say "portkit is uninstalled."
+  say ""
+  say "${GREEN}${BOLD}portkit is uninstalled.${RESET}"
 }
 
 # wait_for_bootout SERVICE: launchctl bootout returns before the job is gone.
@@ -411,9 +429,42 @@ say() {
   printf '%s\n' "$*"
 }
 
+# step MESSAGE: print the heading for a group of commands.
+step() {
+  printf '\n%s==>%s %s%s%s\n' "$BLUE$BOLD" "$RESET" "$BOLD" "$*" "$RESET"
+}
+
+# note MESSAGE: print something worth noticing now, but needing no action.
+note() {
+  printf '%sNote:%s %s\n' "$YELLOW" "$RESET" "$*"
+}
+
+# action LINE...: save a next step for the user, printed by print_actions at
+# the end so it isn't lost among the commands. The first line is the step,
+# the others continue it.
+action() {
+  local first=1 line
+  for line in "$@"; do
+    if [ "$first" = 1 ]; then
+      ACTIONS="$ACTIONS${YELLOW}•${RESET} $line"$'\n'
+      first=0
+    else
+      ACTIONS="$ACTIONS  $line"$'\n'
+    fi
+  done
+}
+
+# print_actions: print the saved next steps, if any.
+print_actions() {
+  if [ -n "$ACTIONS" ]; then
+    printf '\n%sNext steps:%s\n\n' "$YELLOW$BOLD" "$RESET"
+    printf '%s' "$ACTIONS"
+  fi
+}
+
 # run COMMAND...: print a command, then run it unless this is a dry run.
 run() {
-  printf '+ %s\n' "$*"
+  printf '%s+ %s%s\n' "$DIM" "$*" "$RESET"
   if [ "$DRY_RUN" = 0 ]; then
     "$@"
   fi
@@ -421,7 +472,7 @@ run() {
 
 # write_file PATH: write stdin to PATH, unless this is a dry run.
 write_file() {
-  printf '+ write %s\n' "$1"
+  printf '%s+ write %s%s\n' "$DIM" "$1" "$RESET"
   if [ "$DRY_RUN" = 0 ]; then
     cat > "$1"
   else
@@ -431,7 +482,7 @@ write_file() {
 
 # write_file_sudo PATH: write stdin to a root-owned PATH.
 write_file_sudo() {
-  printf '+ sudo write %s\n' "$1"
+  printf '%s+ sudo write %s%s\n' "$DIM" "$1" "$RESET"
   if [ "$DRY_RUN" = 0 ]; then
     sudo tee "$1" > /dev/null
   else
@@ -440,7 +491,11 @@ write_file_sudo() {
 }
 
 die() {
-  printf 'install.sh: %s\n' "$*" >&2
+  if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+    printf '\033[31m\033[1minstall.sh:\033[0m %s\n' "$*" >&2
+  else
+    printf 'install.sh: %s\n' "$*" >&2
+  fi
   exit 1
 }
 

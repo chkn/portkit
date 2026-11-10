@@ -654,7 +654,8 @@ func readCert(path string) (*x509.Certificate, error) {
 }
 
 func trustCmd() *cobra.Command {
-	return &cobra.Command{
+	var noFirefoxHint bool
+	cmd := &cobra.Command{
 		Use:   "trust",
 		Short: "Add the portkit CA to the system trust store",
 		Args:  cobra.NoArgs,
@@ -683,13 +684,17 @@ func trustCmd() *cobra.Command {
 				}
 				fmt.Println("Trusted.")
 			}
-			if _, err := exec.LookPath("certutil"); err != nil {
+			if _, err := exec.LookPath("certutil"); err != nil && !noFirefoxHint {
 				fmt.Println("For Firefox, install certutil (brew install nss, or libnss3-tools) and run `portkit trust` again,")
 				fmt.Println("or import " + CACertPath() + " in Firefox's certificate settings.")
 			}
 			return nil
 		}),
 	}
+	// The install script prints the Firefox hint itself, with its other next steps.
+	cmd.Flags().BoolVar(&noFirefoxHint, "no-firefox-hint", false, "don't print how to trust the CA in Firefox")
+	_ = cmd.Flags().MarkHidden("no-firefox-hint")
+	return cmd
 }
 
 // upgradeConfigCmd carries the service records from autosave.json over to a
