@@ -38,7 +38,7 @@
 portkit_install() {
 set -euo pipefail
 
-VERSION="0.0.1"                 # portkit release
+VERSION="0.0.2"                 # portkit release
 CADDY_VERSION="2.11.7"          # the Caddy it is built with
 RELEASE_URL="https://github.com/chkn/portkit/releases/download/v$VERSION"
 LABEL="dev.portkit.caddy"       # launchd label
