@@ -178,6 +178,14 @@ func handleAdopt(w http.ResponseWriter, r *http.Request) error {
 //   - the name is an on-demand or fixed-port service that isn't running:
 //     take it while the owner lives, then restore it;
 //   - the name is a running service on another port: a conflict.
+//
+// Whenever adopt lands on a registered service, including one held in
+// Replaces, the request's labels and subdomains are merged into that
+// registration too, so they stay after the adopter exits. An adopter that
+// takes a registration's name also carries the registration's labels, so
+// discovery sees both sets while it lives. (Its subdomains aren't copied:
+// a registration's placeholder or regex subdomains can't work for a
+// process portkit didn't start.)
 func planAdopt(services map[string]*Service, req AdoptRequest, state func(string, *Service) ServiceState) (string, *Service, string, error) {
 	if err := ValidateName(req.Name); err != nil {
 		return "", nil, "", err
@@ -192,20 +200,11 @@ func planAdopt(services map[string]*Service, req AdoptRequest, state func(string
 		if !routesTo(name, s, req.Port, state) {
 			continue
 		}
-		merged := *s
-		merged.Labels = maps.Clone(s.Labels)
-		if merged.Labels == nil && len(req.Labels) > 0 {
-			merged.Labels = map[string]string{}
+		merged := withAdditions(s, req.Labels, subs)
+		if s.Replaces != nil {
+			merged.Replaces = withAdditions(s.Replaces, req.Labels, subs)
 		}
-		maps.Copy(merged.Labels, req.Labels)
-		if len(subs) > 0 {
-			merged.Subdomains = maps.Clone(s.Subdomains)
-			if merged.Subdomains == nil {
-				merged.Subdomains = map[string]*Subdomain{}
-			}
-			maps.Copy(merged.Subdomains, subs)
-		}
-		return name, &merged, "merged", nil
+		return name, merged, "merged", nil
 	}
 
 	rec := &Service{
@@ -218,10 +217,16 @@ func planAdopt(services map[string]*Service, req AdoptRequest, state func(string
 	if len(subs) > 0 {
 		rec.Subdomains = subs
 	}
+	// takeOver has rec hold reg's name: reg gets the request's additions,
+	// and rec carries reg's labels.
+	takeOver := func(reg *Service) {
+		rec.Replaces = withAdditions(reg, req.Labels, subs)
+		rec.Labels = maps.Clone(rec.Replaces.Labels)
+	}
 	existing := services[req.Name]
 	if existing == nil || (existing.Owner != nil && !existing.Owner.alive()) {
 		if existing != nil && existing.Replaces != nil {
-			rec.Replaces = existing.Replaces
+			takeOver(existing.Replaces)
 		}
 		return req.Name, rec, "created", nil
 	}
@@ -231,8 +236,31 @@ func planAdopt(services map[string]*Service, req AdoptRequest, state func(string
 	if existing.Owner != nil {
 		return "", nil, "", fmt.Errorf("%s.localhost already belongs to process %d", req.Name, existing.Owner.PID)
 	}
-	rec.Replaces = existing
+	takeOver(existing)
 	return req.Name, rec, "took over", nil
+}
+
+// withAdditions returns a copy of s with labels and subs merged in, leaving
+// s untouched.
+func withAdditions(s *Service, labels map[string]string, subs map[string]*Subdomain) *Service {
+	out := *s
+	out.Labels = withEntries(s.Labels, labels)
+	out.Subdomains = withEntries(s.Subdomains, subs)
+	return &out
+}
+
+// withEntries returns base with add's entries set, copying base rather than
+// modifying it. It returns base itself when add is empty.
+func withEntries[K comparable, V any](base, add map[K]V) map[K]V {
+	if len(add) == 0 {
+		return base
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = make(map[K]V, len(add))
+	}
+	maps.Copy(out, add)
+	return out
 }
 
 // routesTo reports whether a service currently routes its main host to port.

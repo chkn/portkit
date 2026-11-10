@@ -99,8 +99,20 @@ func TestPlanAdopt(t *testing.T) {
 
 	// An on-demand service that isn't running: take it over.
 	name, rec, action, err = planAdopt(services, AdoptRequest{Name: "app", Port: 4200, Owner: *owner}, stopped)
-	if err != nil || action != "took over" || rec.Replaces != ondemand {
+	if err != nil || action != "took over" || rec.Replaces.Mode != ModeOnDemand || rec.Replaces.Labels["a"] != "1" {
 		t.Errorf("take over: %s %s %+v %v", name, action, rec, err)
+	}
+
+	// Taking over updates the stored registration with the labels and subs.
+	_, rec, _, _ = planAdopt(services, AdoptRequest{Name: "app", Port: 4200, Labels: map[string]string{"kind": "e"}, Subdomains: map[string]int{"api": 4201}, Owner: *owner}, stopped)
+	if r := rec.Replaces; r.Labels["a"] != "1" || r.Labels["kind"] != "e" || r.Subdomains["api"].Port != 4201 {
+		t.Errorf("take over didn't update the registration: %+v", r)
+	}
+	if rec.Labels["a"] != "1" || rec.Labels["kind"] != "e" {
+		t.Errorf("adopter doesn't carry the registration's labels: %+v", rec.Labels)
+	}
+	if ondemand.Labels["kind"] != "" || ondemand.Subdomains != nil {
+		t.Error("take over modified the registration in place")
 	}
 
 	// A running service on another port: conflict.
@@ -110,8 +122,14 @@ func TestPlanAdopt(t *testing.T) {
 
 	// A record whose owner exited is replaced, keeping what it replaced.
 	services = map[string]*Service{"app": {Mode: ModeAdopted, Port: 1, Owner: &Owner{PID: 999999, Started: "x"}, Replaces: ondemand}}
-	if _, rec, action, _ := planAdopt(services, AdoptRequest{Name: "app", Port: 4200, Owner: *owner}, stopped); action != "created" || rec.Replaces != ondemand {
+	if _, rec, action, _ := planAdopt(services, AdoptRequest{Name: "app", Port: 4200, Labels: map[string]string{"kind": "e"}, Owner: *owner}, stopped); action != "created" || rec.Replaces.Labels["a"] != "1" || rec.Replaces.Labels["kind"] != "e" || rec.Labels["a"] != "1" || rec.Labels["kind"] != "e" {
 		t.Errorf("stale record: %s %+v", action, rec)
+	}
+
+	// Merging into a record that holds a registration updates both.
+	services = map[string]*Service{"app": {Mode: ModeAdopted, Port: 4300, Owner: owner, Replaces: ondemand}}
+	if _, rec, action, _ := planAdopt(services, AdoptRequest{Name: "x", Port: 4300, Labels: map[string]string{"kind": "e"}, Owner: *owner}, stopped); action != "merged" || rec.Labels["kind"] != "e" || rec.Replaces.Labels["kind"] != "e" {
+		t.Errorf("merge with replaces: %s %+v", action, rec)
 	}
 }
 

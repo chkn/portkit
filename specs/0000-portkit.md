@@ -348,7 +348,7 @@ When a record already exists:
 | The name belongs to an on-demand service that isn't running | The adopter takes the name while it lives, so a visit doesn't start a second copy. The on-demand record applies again when the adopter exits. |
 | The name belongs to a running service on another port | `adopt` fails with a non-zero exit and a message naming the conflict. |
 
-Labels merged into a registered service (mode 1 or 2) stay after its process stops, so discovery can still find a stopped on-demand service and wake it. Running `portkit register` for that name again resets its labels.
+When adopt lands on a registered service (mode 1 or 2), whether by merging into it or by taking its name, the labels and subdomains passed to `adopt` are merged into the stored registration. An adopter that takes a registration's name also carries that registration's labels while it lives, so discovery sees both. Labels merged into a registered service stay after its process stops, so discovery can still find a stopped on-demand service and wake it. Running `portkit register` for that name again resets its labels.
 
 `adopt` takes `--label` and `--sub NAME=PORT`. It can't use placeholder or regex subdomains, because portkit never starts the process or sees its output.
 
