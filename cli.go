@@ -101,7 +101,7 @@ type svcFlags struct {
 
 func (f *svcFlags) addLabelSub(cmd *cobra.Command) {
 	cmd.Flags().StringArrayVar(&f.labels, "label", nil, "add a label `key=value` (repeatable)")
-	cmd.Flags().StringArrayVar(&f.subs, "sub", nil, "serve a subdomain: `NAME=PORT` or NAME=/regex/ (repeatable)")
+	cmd.Flags().StringArrayVar(&f.subs, "sub", nil, "serve a subdomain: `NAME=PORT`, NAME=/regex/ or NAME={port} (repeatable)")
 }
 
 func (f *svcFlags) addProcess(cmd *cobra.Command) {
@@ -127,24 +127,43 @@ func parseKV(list []string, what string) (map[string]string, error) {
 	return m, nil
 }
 
-// parseSubs reads --sub NAME=PORT and NAME=/regex/.
-func parseSubs(list []string, allowRegex bool) (map[string]*Subdomain, error) {
+// parseSubs reads --sub NAME=PORT, NAME=/regex/ and NAME={placeholder}.
+// For a fixed-port service (mainPort != 0) only ports and {port} are
+// allowed, and {port} becomes mainPort.
+func parseSubs(list []string, mainPort int) (map[string]*Subdomain, error) {
 	subs := map[string]*Subdomain{}
 	for _, item := range list {
 		name, spec, ok := strings.Cut(item, "=")
 		if !ok || !ValidLabel(name) {
-			return nil, fmt.Errorf("--sub %q must be NAME=PORT or NAME=/regex/, with NAME a single label", item)
+			return nil, fmt.Errorf("--sub %q must be NAME=PORT, NAME=/regex/ or NAME={port}, with NAME a single label", item)
 		}
 		if strings.HasPrefix(spec, "/") && strings.HasSuffix(spec, "/") && len(spec) >= 2 {
-			if !allowRegex {
-				return nil, fmt.Errorf("--sub %s: adopt takes only fixed ports, since portkit never sees the server's output", name)
+			if mainPort != 0 {
+				return nil, fmt.Errorf("--sub %s: a service with a fixed port takes only ports, since portkit never sees the server's output", name)
 			}
 			subs[name] = &Subdomain{Match: spec[1 : len(spec)-1]}
 			continue
 		}
+		if ph, ok := strings.CutPrefix(spec, "{"); ok {
+			if ph, ok = strings.CutSuffix(ph, "}"); !ok || !ValidLabel(ph) {
+				return nil, fmt.Errorf("--sub %s: %q is not a {placeholder}", name, spec)
+			}
+			if ph == name {
+				return nil, fmt.Errorf("--sub %s: can't share its own port; put {%s} in the command instead", name, ph)
+			}
+			switch {
+			case mainPort == 0:
+				subs[name] = &Subdomain{Same: ph}
+			case ph == "port":
+				subs[name] = &Subdomain{Port: mainPort}
+			default:
+				return nil, fmt.Errorf("--sub %s: a service with a fixed port has no {%s}, only {port}", name, ph)
+			}
+			continue
+		}
 		port, err := strconv.Atoi(spec)
 		if err != nil || port <= 0 || port > 65535 {
-			return nil, fmt.Errorf("--sub %s: %q is not a port or /regex/", name, spec)
+			return nil, fmt.Errorf("--sub %s: %q is not a port, /regex/ or {placeholder}", name, spec)
 		}
 		subs[name] = &Subdomain{Port: port}
 	}
@@ -159,7 +178,7 @@ func (f *svcFlags) buildProcessService(mode string, command []string) (*Service,
 	if s.Labels, err = parseKV(f.labels, "--label"); err != nil {
 		return nil, err
 	}
-	subs, err := parseSubs(f.subs, true)
+	subs, err := parseSubs(f.subs, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +231,8 @@ func registerCmd() *cobra.Command {
   portkit register foo -- npm run dev -- --port {port}
       Start the command on a free port whenever foo.localhost is visited.
       {port} and $PORT hold the assigned port; {api} declares a subdomain
-      api.foo.localhost with a port of its own.`,
+      api.foo.localhost with a port of its own. --sub www={port} serves
+      www.foo.localhost from the same port as foo.localhost.`,
 		Run: cli(func(cmd *cobra.Command, args []string) error {
 			dash := cmd.ArgsLenAtDash()
 			var name string
@@ -237,7 +257,7 @@ func registerCmd() *cobra.Command {
 				if s.Labels, err = parseKV(f.labels, "--label"); err != nil {
 					return err
 				}
-				subs, err := parseSubs(f.subs, false)
+				subs, err := parseSubs(f.subs, port)
 				if err != nil {
 					return err
 				}
@@ -362,7 +382,7 @@ into that service instead, and its URL is printed.`,
 			if req.Labels, err = parseKV(f.labels, "--label"); err != nil {
 				return err
 			}
-			subs, err := parseSubs(f.subs, false)
+			subs, err := parseSubs(f.subs, port)
 			if err != nil {
 				return err
 			}
@@ -434,8 +454,10 @@ func lsCmd() *cobra.Command {
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", ServiceURL(name), modeLabel(s.Mode), st.State, dash(upstream), dash(tildePath(s.Cwd)))
 				for _, sub := range sortedKeys(s.Subdomains) {
 					up := st.Subdomains[sub]
-					if up == "" && s.Subdomains[sub].Port != 0 {
-						up = "localhost:" + strconv.Itoa(s.Subdomains[sub].Port)
+					if up == "" && s.portSource(sub) == "" {
+						up = upstream // served from the main port
+					} else if p := s.subPort(sub); up == "" && p != 0 {
+						up = "localhost:" + strconv.Itoa(p)
 					}
 					fmt.Fprintf(tw, "  %s\t\t\t%s\t\n", ServiceURL(sub+"."+name), dash(up))
 				}

@@ -56,11 +56,13 @@ type Service struct {
 }
 
 // Subdomain declares where a subdomain's port comes from: a placeholder in
-// the command (Assign), a fixed Port, or the first output line that Matches.
+// the command (Assign), a fixed Port, the first output line that Matches,
+// or the port of another placeholder (Same: "port" or a subdomain name).
 type Subdomain struct {
 	Assign bool   `json:"assign,omitempty"`
 	Port   int    `json:"port,omitempty"`
 	Match  string `json:"match,omitempty"`
+	Same   string `json:"same,omitempty"`
 
 	re *regexp.Regexp
 }
@@ -139,6 +141,11 @@ func (s *Service) provision(name string) error {
 		if err := sd.provision(s.Mode); err != nil {
 			return fmt.Errorf("service %s: subdomain %s: %w", name, sub, err)
 		}
+		if sd.Same != "" && sd.Same != "port" {
+			if src := s.Subdomains[sd.Same]; src == nil || src.Same != "" {
+				return fmt.Errorf("service %s: subdomain %s: {%s} is neither {port} nor another subdomain's placeholder", name, sub, sd.Same)
+			}
+		}
 	}
 	if s.Mode == ModeOnDemand {
 		for _, ph := range Placeholders(s.Command) {
@@ -169,8 +176,11 @@ func (sd *Subdomain) provision(mode string) error {
 	if sd.Match != "" {
 		n++
 	}
+	if sd.Same != "" {
+		n++
+	}
 	if n != 1 {
-		return fmt.Errorf("needs exactly one of assign, port or match")
+		return fmt.Errorf("needs exactly one of assign, port, match or same")
 	}
 	if sd.Port < 0 || sd.Port > 65535 {
 		return fmt.Errorf("bad port %d", sd.Port)
@@ -238,8 +248,22 @@ func nameFromHost(host string) (string, bool) {
 // ServiceURL is the HTTPS URL for a service name or <sub>.<name>.
 func ServiceURL(name string) string { return "https://" + name + ".localhost" }
 
-// subPort returns the port of a fixed-port subdomain, or the main port.
+// portSource returns the target whose port sub is served from: sub itself,
+// or for a "same" subdomain, the subdomain it names ("" for the main port).
+func (s *Service) portSource(sub string) string {
+	if sd := s.Subdomains[sub]; sd != nil && sd.Same != "" {
+		if sd.Same == "port" {
+			return ""
+		}
+		return sd.Same
+	}
+	return sub
+}
+
+// subPort returns the fixed port sub is served from (following same), or
+// the main port for "".
 func (s *Service) subPort(sub string) int {
+	sub = s.portSource(sub)
 	if sub == "" {
 		return s.Port
 	}

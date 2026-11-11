@@ -462,7 +462,7 @@ func (s *supervisor) State(name string) ProcState {
 		st.State, st.Addr = "running", res.Addr
 	}
 	for sub := range p.svc.Subdomains {
-		if res, ok := r.det.Result(sub); ok {
+		if res, ok := r.det.Result(p.svc.portSource(sub)); ok {
 			if st.Subdomains == nil {
 				st.Subdomains = map[string]string{}
 			}

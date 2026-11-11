@@ -103,7 +103,7 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, next ca
 	if svc.Mode == ModeOnDemand {
 		done := sup.Begin(name, svc)
 		defer done()
-		if _, err := sup.Ensure(r.Context(), name, svc, sub); err != nil {
+		if _, err := sup.Ensure(r.Context(), name, svc, svc.portSource(sub)); err != nil {
 			if errors.Is(err, r.Context().Err()) {
 				return nil // the client went away
 			}
@@ -148,7 +148,7 @@ func (u *Upstreams) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, err
 	var addr string
 	var port int
 	if svc.Mode == ModeOnDemand {
-		res, err := sup.Ensure(r.Context(), name, svc, sub)
+		res, err := sup.Ensure(r.Context(), name, svc, svc.portSource(sub))
 		if err != nil {
 			return nil, err
 		}
@@ -176,7 +176,7 @@ func (u *Upstreams) ResetCache(r *http.Request) error {
 		return nil
 	}
 	if svc.Mode == ModeOnDemand {
-		sup.Redetect(name, sub)
+		sup.Redetect(name, svc.portSource(sub))
 	} else {
 		probes.forget(svc.subPort(sub))
 	}

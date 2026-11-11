@@ -51,7 +51,10 @@ After running the install script, the following commands will be on your PATH:
 
 Flags for `register`, `run` and `adopt`:
 - `--label key=value` - Adds an arbitrary label to the service record that can be queried.
-- `--sub NAME=PORT` (or `NAME=/regex/` for `register` and `run`) - Serve a subdomain `NAME.<name>.localhost`.
+- `--sub NAME=PORT` - Serve a subdomain `NAME.<name>.localhost`. Instead of a port, it also takes:
+  - `NAME={port}` to serve the subdomain from the service's own port, e.g. `--sub www={port}`.
+  - `NAME={api}` (`register` and `run` with a command) to serve it from the same port as the `{api}` subdomain.
+  - `NAME=/regex/` (`register` and `run` with a command) to take the port from the first output line that matches.
 
 Flags for `register` and `run`:
 - `--idle-timeout 30m|never`

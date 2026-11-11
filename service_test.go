@@ -67,6 +67,10 @@ func TestProvision(t *testing.T) {
 		"bad regex":        {Mode: ModeOnDemand, Command: []string{"x"}, Subdomains: map[string]*Subdomain{"a": {Match: "("}}},
 		"two sources":      {Mode: ModeOnDemand, Command: []string{"x"}, Subdomains: map[string]*Subdomain{"a": {Port: 1, Assign: true}}},
 		"regex for port":   {Mode: ModePort, Port: 1, Subdomains: map[string]*Subdomain{"a": {Match: "x"}}},
+		"same for port":    {Mode: ModePort, Port: 1, Subdomains: map[string]*Subdomain{"a": {Same: "port"}}},
+		"same unknown":     {Mode: ModeOnDemand, Command: []string{"x"}, Subdomains: map[string]*Subdomain{"a": {Same: "api"}}},
+		"same chained": {Mode: ModeOnDemand, Command: []string{"x"},
+			Subdomains: map[string]*Subdomain{"a": {Same: "port"}, "b": {Same: "a"}}},
 	}
 	for what, s := range bad {
 		if err := s.provision("foo"); err == nil {
@@ -78,12 +82,65 @@ func TestProvision(t *testing.T) {
 		t.Error("subdomain of a four-label name accepted")
 	}
 	good := &Service{Mode: ModeOnDemand, Command: []string{"x", "{port}", "{api}"}, IdleTimeout: "never",
-		Subdomains: map[string]*Subdomain{"api": {Assign: true}, "grpc": {Match: `ready at :(\d+)`}}}
+		Subdomains: map[string]*Subdomain{"api": {Assign: true}, "grpc": {Match: `ready at :(\d+)`},
+			"www": {Same: "port"}, "v1": {Same: "api"}}}
 	if err := good.provision("foo"); err != nil {
 		t.Fatal(err)
 	}
 	if good.idleTimeout != 0 || good.Subdomains["grpc"].re == nil {
 		t.Error("provision didn't parse idle_timeout or compile the regex")
+	}
+}
+
+func TestSameSubdomain(t *testing.T) {
+	svc := &Service{Mode: ModeForeground, Port: 3000, Owner: &Owner{PID: 1},
+		Subdomains: map[string]*Subdomain{"api": {Port: 3001}, "www": {Same: "port"}, "v1": {Same: "api"}}}
+	if err := svc.provision("foo"); err != nil {
+		t.Fatal(err)
+	}
+	for sub, want := range map[string]int{"": 3000, "www": 3000, "api": 3001, "v1": 3001} {
+		if got := svc.subPort(sub); got != want {
+			t.Errorf("subPort(%q) = %d, want %d", sub, got, want)
+		}
+	}
+	if svc.portSource("www") != "" || svc.portSource("v1") != "api" || svc.portSource("api") != "api" {
+		t.Error("portSource doesn't follow same")
+	}
+	od := &Service{Mode: ModeOnDemand, Command: []string{"x", "{api}"},
+		Subdomains: map[string]*Subdomain{"api": {Assign: true}, "www": {Same: "port"}, "v1": {Same: "api"}}}
+	ts := Targets(od, map[string]int{"": 3000, "api": 3001})
+	if len(ts) != 2 || ts[1].Name != "api" {
+		t.Errorf("Targets = %+v, want only the main port and api", ts)
+	}
+	env := ChildEnv(nil, "foo", od, map[string]int{"": 3000, "api": 3001})
+	for _, kv := range []string{"PORTKIT_PORT_WWW=3000", "PORTKIT_PORT_V1=3001"} {
+		if !slices.Contains(env, kv) {
+			t.Errorf("missing %s in %v", kv, env)
+		}
+	}
+}
+
+func TestParseSubs(t *testing.T) {
+	subs, err := parseSubs([]string{"www={port}", "v1={api}", "db=5432", "grpc=/:(\\d+)/"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subs["www"].Same != "port" || subs["v1"].Same != "api" || subs["db"].Port != 5432 || subs["grpc"].Match == "" {
+		t.Errorf("parseSubs = %+v", subs)
+	}
+	subs, err = parseSubs([]string{"www={port}"}, 3000)
+	if err != nil || subs["www"].Port != 3000 {
+		t.Errorf("fixed parseSubs = %+v, %v", subs, err)
+	}
+	for _, bad := range []string{"www={api}", "www=/x/"} {
+		if _, err := parseSubs([]string{bad}, 3000); err == nil {
+			t.Errorf("fixed parseSubs accepted %s", bad)
+		}
+	}
+	for _, bad := range []string{"www={www}", "www={Bad}", "www={port"} {
+		if _, err := parseSubs([]string{bad}, 0); err == nil {
+			t.Errorf("parseSubs accepted %s", bad)
+		}
 	}
 }
 

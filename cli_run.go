@@ -121,7 +121,7 @@ func runForeground(name string, s *Service, replace bool) (int, error) {
 	registered := false
 	rec := &Service{
 		Mode: ModeForeground, Cwd: s.Cwd, Labels: s.Labels, HostHeader: s.HostHeader,
-		Owner: owner, Replaces: restore,
+		Owner: owner, Replaces: restore, Subdomains: map[string]*Subdomain{},
 	}
 	go RunDetection(det, pgid, exited, func(target string, res Result) {
 		mu.Lock()
@@ -131,10 +131,13 @@ func runForeground(name string, s *Service, replace bool) (int, error) {
 			rec.Port = res.Port
 		} else {
 			host = target + "." + name
-			if rec.Subdomains == nil {
-				rec.Subdomains = map[string]*Subdomain{}
-			}
 			rec.Subdomains[target] = &Subdomain{Port: res.Port}
+		}
+		// Subdomains sharing a placeholder's port follow it once it's known.
+		for sub, sd := range s.Subdomains {
+			if src := s.portSource(sub); sd.Same != "" && (src == "" || rec.Subdomains[src] != nil) {
+				rec.Subdomains[sub] = &Subdomain{Same: sd.Same}
+			}
 		}
 		say(DescribeResult(host, res) + "\n")
 		if rec.Port == 0 {

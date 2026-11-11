@@ -71,6 +71,9 @@ func Targets(svc *Service, ports map[string]int) []Target {
 	sort.Strings(subs)
 	for _, sub := range subs {
 		sd := svc.Subdomains[sub]
+		if sd.Same != "" {
+			continue // served from its source's port
+		}
 		ts = append(ts, Target{Name: sub, Assigned: ports[sub], InCommand: inCommand[sub], Fixed: sd.Port, Match: sd.re})
 	}
 	return ts
@@ -104,11 +107,13 @@ func ChildEnv(base []string, name string, svc *Service, ports map[string]int) []
 	set("PORTKIT_SERVICE", name)
 	set("PORTKIT_URL", ServiceURL(name))
 	set("PORTKIT_HOME", Home())
-	for sub, sd := range svc.Subdomains {
-		if p := ports[sub]; p != 0 {
+	for sub := range svc.Subdomains {
+		p := ports[svc.portSource(sub)]
+		if p == 0 {
+			p = svc.subPort(sub)
+		}
+		if p != 0 {
 			set(envName(sub), strconv.Itoa(p))
-		} else if sd.Port != 0 {
-			set(envName(sub), strconv.Itoa(sd.Port))
 		}
 	}
 	if _, ok := env["NODE_EXTRA_CA_CERTS"]; !ok {
