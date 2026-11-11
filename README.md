@@ -66,7 +66,7 @@ Flags for `register` and `run`:
 
 When Portkit runs a server via the `register` or `run` command, it uses the following methods to determine which port to proxy to:
 
-1. **`--listen-port` argument** - If you pass a port to the `register` or `run` command, it will use that port.
+1. **`--listen-port` argument** - If you pass a port to the `register` or `run` command, it will use that port. `PORT` and `{port}` are set to it instead of a free port.
 2. **`PORT` environment variable** - Portkit sets this to a free port when it starts the process. If it, or any process in its child process group, listens on this port, Portkit will proxy to this port.
 3. **Interpolated command line arguments** - In any of the `CMD` arguments above, you can pass `{port}`, which will be replaced with a free port the server should listen on. Any interpolation other than `{port}` will be replaced with a free port for that subdomain (e.g. `{foo}` will be replaced with a free port and `foo.<name>.localhost` will proxy to it.
 4. **Stdout and stderr** - Portkit scans the process's output for a port number. It only picks one that some process in the process group is listening on.

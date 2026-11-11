@@ -23,7 +23,7 @@ func FreePort() (int, error) {
 }
 
 // AssignPorts picks a free port for {port} ("") and for each placeholder
-// subdomain.
+// subdomain. With a listen port, {port} and PORT use it instead.
 func AssignPorts(svc *Service) (map[string]int, error) {
 	ports := map[string]int{}
 	used := map[int]bool{}
@@ -41,7 +41,10 @@ func AssignPorts(svc *Service) (map[string]int, error) {
 		}
 		return errors.New("no free port")
 	}
-	if err := pick(""); err != nil {
+	if svc.ListenPort != 0 {
+		ports[""] = svc.ListenPort
+		used[svc.ListenPort] = true
+	} else if err := pick(""); err != nil {
 		return nil, err
 	}
 	for sub, sd := range svc.Subdomains {

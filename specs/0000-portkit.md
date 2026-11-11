@@ -457,7 +457,7 @@ portkit: foo.localhost → 127.0.0.1:3000 (assigned port)
 portkit: foo.localhost → 127.0.0.1:5174 (guessed lowest of 5174, 24678; use {port} or --listen-port to fix)
 ```
 
-The upstream dials the exact address found (`[::1]` or `127.0.0.1`), which avoids the IPv4/IPv6 mismatch with Node servers that bind only `::1`. `--listen-port N` skips detection for a process whose port is known. If dials start failing after a restart, detection runs again.
+The upstream dials the exact address found (`[::1]` or `127.0.0.1`), which avoids the IPv4/IPv6 mismatch with Node servers that bind only `::1`. `--listen-port N` skips detection for a process whose port is known; `PORT` and `{port}` are set to N instead of a free port. If dials start failing after a restart, detection runs again.
 
 ## Subdomains
 
