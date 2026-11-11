@@ -422,7 +422,7 @@ portkit trusts what the OS says the process is listening on, and uses log lines 
 
 Detection runs every 250 ms from start until it settles, in this order:
 
-1. **Assigned port.** If the process group listens on the assigned port, use it and ignore the logs.
+1. **Assigned port.** If the process group listens on the assigned port, use it and ignore the logs. If the command passes the port as `{port}`, also use it when it accepts connections but another process owns it, as with `docker run -p {port}:80`. A port passed only through `PORT` doesn't count this way, because many tools ignore `PORT`.
 2. **Listening sockets.** Collect the TCP ports in LISTEN state owned by the process group. On macOS that is `lsof -a -iTCP -sTCP:LISTEN -g <pgid> -P -n -F n`. On Linux, match the socket inodes under `/proc/<pid>/fd` against `/proc/net/tcp` and `/proc/net/tcp6`. A process group covers chains like `npm → sh → node`.
 3. **Log match.** A port named in a log line that is also a listening socket wins. The most recent such line wins.
 4. **Single socket.** With no log match and exactly one listening port, use it.
@@ -473,7 +473,7 @@ Rules:
 
 - **Placeholders.** Any `{name}` token in the command, where the name is a valid DNS label, declares a subdomain; `{port}` is always the main port. `{{` and `}}` write literal braces.
 - **Environment.** Each subdomain's port is also set as `PORTKIT_PORT_<NAME>`, for example `PORTKIT_PORT_API`, beside `PORT`.
-- **Detection.** Subdomain ports are confirmed as listening sockets, like the main port. A regex match on a port outside the process group is accepted only if it takes connections (step 5 of Port detection). Subdomain ports are resolved first, and the main-port steps skip them.
+- **Detection.** Subdomain ports are confirmed as listening sockets, like the main port. A placeholder port is also accepted if it takes connections outside the process group (step 1 of Port detection). A regex match on a port outside the process group is accepted only if it takes connections (step 5 of Port detection). Subdomain ports are resolved first, and the main-port steps skip them.
 - **adopt.** Only fixed ports work, because portkit never sees an adopter's output.
 - **On-demand start.** Visiting `api.foo.localhost` starts `foo` like a visit to `foo.localhost` does, and waits for the `api` port.
 - **Idle.** Traffic to any subdomain counts as activity for the service.

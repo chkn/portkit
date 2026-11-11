@@ -56,7 +56,11 @@ func AssignPorts(svc *Service) (map[string]int, error) {
 
 // Targets lists the ports detection has to find for svc.
 func Targets(svc *Service, ports map[string]int) []Target {
-	ts := []Target{{Name: "", Assigned: ports[""], Fixed: svc.ListenPort}}
+	inCommand := map[string]bool{}
+	for _, ph := range Placeholders(svc.Command) {
+		inCommand[ph] = true
+	}
+	ts := []Target{{Name: "", Assigned: ports[""], InCommand: inCommand["port"], Fixed: svc.ListenPort}}
 	subs := make([]string, 0, len(svc.Subdomains))
 	for sub := range svc.Subdomains {
 		subs = append(subs, sub)
@@ -64,7 +68,7 @@ func Targets(svc *Service, ports map[string]int) []Target {
 	sort.Strings(subs)
 	for _, sub := range subs {
 		sd := svc.Subdomains[sub]
-		ts = append(ts, Target{Name: sub, Assigned: ports[sub], Fixed: sd.Port, Match: sd.re})
+		ts = append(ts, Target{Name: sub, Assigned: ports[sub], InCommand: inCommand[sub], Fixed: sd.Port, Match: sd.re})
 	}
 	return ts
 }

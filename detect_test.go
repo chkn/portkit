@@ -133,6 +133,29 @@ func TestDetectOutsideProcessGroup(t *testing.T) {
 	}
 }
 
+func TestDetectAssignedPortOutsideProcessGroup(t *testing.T) {
+	// docker run -p {port}:80: the Docker daemon owns the port, and nothing is logged.
+	accepts := func(p int) (string, bool) { return "127.0.0.1:41000", p == 41000 }
+	res := detect(t, []Target{{Name: "", Assigned: 41000, InCommand: true}}, "", nil, accepts)
+	if r := res[""]; r.Port != 41000 || r.Reason != "assigned port, outside the process group" {
+		t.Errorf("got %+v", r)
+	}
+	// Through PORT alone, the process may have ignored it.
+	res = detect(t, []Target{{Name: "", Assigned: 41000}}, "", nil, accepts)
+	if r, ok := res[""]; ok {
+		t.Errorf("resolved %+v without a placeholder", r)
+	}
+}
+
+func TestDetectAssignedSubdomainOutsideProcessGroup(t *testing.T) {
+	accepts := func(p int) (string, bool) { return "127.0.0.1:41001", p == 41001 }
+	targets := []Target{{Name: "", Assigned: 41000}, {Name: "api", Assigned: 41001, InCommand: true}}
+	res := detect(t, targets, "", []Socket{{"127.0.0.1", 41000}}, accepts)
+	if r := res["api"]; r.Port != 41001 || r.Reason != "assigned port, outside the process group" {
+		t.Errorf("api = %+v", r)
+	}
+}
+
 func TestDetectListenPort(t *testing.T) {
 	res := detect(t, []Target{{Name: "", Assigned: 41000, Fixed: 5000}}, "Server listening on port 6000\n", []Socket{{"127.0.0.1", 5000}, {"127.0.0.1", 6000}}, nil)
 	if r := res[""]; r.Port != 5000 || r.Reason != "--listen-port" {
@@ -207,5 +230,20 @@ func TestDialAddr(t *testing.T) {
 	}
 	if _, ok := dialAddr([]Socket{{"127.0.0.1", 81}}, 80); ok {
 		t.Error("matched the wrong port")
+	}
+}
+
+func TestTargetsInCommand(t *testing.T) {
+	svc := &Service{
+		Command:    []string{"docker", "run", "-p", "{port}:80", "-p", "{api}:81"},
+		Subdomains: map[string]*Subdomain{"api": {Assign: true}},
+	}
+	ts := Targets(svc, map[string]int{"": 41000, "api": 41001})
+	if !ts[0].InCommand || !ts[1].InCommand {
+		t.Errorf("got %+v", ts)
+	}
+	svc = &Service{Command: []string{"npm", "start"}}
+	if ts := Targets(svc, map[string]int{"": 41000}); ts[0].InCommand {
+		t.Errorf("PORT only: got %+v", ts)
 	}
 }

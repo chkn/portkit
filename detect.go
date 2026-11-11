@@ -103,10 +103,11 @@ func probePort(port int) (string, bool) {
 
 // Target is one port to find: the main port ("") or a subdomain's.
 type Target struct {
-	Name     string
-	Assigned int            // assigned through PORT, {port} or {<sub>}
-	Fixed    int            // known in advance: --listen-port or --sub NAME=PORT
-	Match    *regexp.Regexp // --sub NAME=/regex/
+	Name      string
+	Assigned  int            // assigned through PORT, {port} or {<sub>}
+	InCommand bool           // Assigned is passed as a placeholder in the command
+	Fixed     int            // known in advance: --listen-port or --sub NAME=PORT
+	Match     *regexp.Regexp // --sub NAME=/regex/
 }
 
 // Result is a detected port and why it was chosen.
@@ -315,9 +316,7 @@ func (d *Detector) resolveSub(t Target, socks []Socket) (Result, bool) {
 			return Result{Addr: addr, Port: t.Fixed, Reason: "fixed port"}, true
 		}
 	case t.Assigned != 0:
-		if addr, ok := dialAddr(socks, t.Assigned); ok {
-			return Result{Addr: addr, Port: t.Assigned, Reason: "assigned port"}, true
-		}
+		return d.resolveAssigned(t, socks)
 	case t.Match != nil:
 		m, ok := d.matched[t.Name]
 		if !ok || m.port == 0 {
@@ -329,6 +328,21 @@ func (d *Detector) resolveSub(t Target, socks []Socket) (Result, bool) {
 		}
 		if addr, ok := d.accepts(m.port); ok {
 			return Result{Addr: addr, Port: m.port, Reason: reason}, true
+		}
+	}
+	return Result{}, false
+}
+
+// resolveAssigned finds t's assigned port. When the command line passes it
+// as a placeholder, it counts even if another process owns it, as with
+// `docker run -p {port}:80`. PORT alone may be ignored, so it doesn't.
+func (d *Detector) resolveAssigned(t Target, socks []Socket) (Result, bool) {
+	if addr, ok := dialAddr(socks, t.Assigned); ok {
+		return Result{Addr: addr, Port: t.Assigned, Reason: "assigned port"}, true
+	}
+	if t.InCommand {
+		if addr, ok := d.accepts(t.Assigned); ok {
+			return Result{Addr: addr, Port: t.Assigned, Reason: "assigned port, outside the process group"}, true
 		}
 	}
 	return Result{}, false
@@ -350,8 +364,8 @@ func (d *Detector) resolveMain(t Target, socks []Socket, claimed map[int]bool) (
 
 	// 1. The assigned port.
 	if t.Assigned != 0 {
-		if addr, ok := dialAddr(socks, t.Assigned); ok {
-			return Result{Addr: addr, Port: t.Assigned, Reason: "assigned port"}, true, true
+		if r, ok := d.resolveAssigned(t, socks); ok {
+			return r, true, true
 		}
 	}
 
