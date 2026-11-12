@@ -348,6 +348,7 @@ trust_ca() {
   step "Trusting the portkit CA"
   run "$BIN_DIR/portkit" trust --no-firefox-hint
   if ! command -v certutil >/dev/null; then
+    action "For Node.js, you may need to pass ${BOLD}--use-system-ca${RESET} or set ${BOLD}NODE_OPTIONS=--use-system-ca${RESET}."
     action "To trust the CA in Firefox, install certutil (${BOLD}brew install nss${RESET}, or ${BOLD}libnss3-tools${RESET})" \
            "and run ${BOLD}portkit trust${RESET}, or import this file in Firefox's certificate settings:" \
            "  $CA_CERT"
